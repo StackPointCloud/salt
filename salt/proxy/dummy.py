@@ -15,9 +15,6 @@ import salt.utils.files
 # Import Salt libs
 import salt.utils.files
 
-# Import Salt libs
-import salt.utils.files
-
 # This must be present or the Salt loader won't load this module
 __proxyenabled__ = ['dummy']
 
