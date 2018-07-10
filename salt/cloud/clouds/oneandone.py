@@ -68,6 +68,10 @@ Set up the cloud configuration at ``/etc/salt/cloud.providers`` or
       load_balancer_id: <ID>
       # Monitoring policy ID
       monitoring_policy_id: <ID>
+      # Server type (cloud or baremetal)
+      server_type: <type>
+      # Baremetal model ID
+      baremetal_model: <ID or name>
 
 Set ``deploy`` to False if Salt should not be installed on the node.
 
@@ -197,6 +201,29 @@ def get_size(vm_):
 
     raise SaltCloudNotFound(
         'The specified size, \'{0}\', could not be found.'.format(vm_size)
+    )
+
+
+def get_baremetal_model(vm_):
+    '''
+    Return the VM's baremetal model object
+    '''
+    vm_baremetal_model = config.get_cloud_config_value(
+        'baremetal_model', vm_, __opts__, default=None,
+        search_global=False
+    )
+    baremetal_models = avail_baremetal_models()
+
+    if not vm_baremetal_model:
+        baremetal_model = next((item for item in baremetal_models if item['name'] == 'BMC_L'), None)
+        return baremetal_model
+
+    baremetal_model = next((item for item in baremetal_models if item['name'] == vm_baremetal_model or item['id'] == vm_baremetal_model), None)
+    if baremetal_model:
+        return baremetal_model
+
+    raise SaltCloudNotFound(
+        'The specified baremetal model, \'{0}\', could not be found.'.format(vm_baremetal_model)
     )
 
 
@@ -362,6 +389,24 @@ def avail_sizes(call=None):
     return sizes
 
 
+def avail_baremetal_models(call=None):
+    '''
+    Return a dict of all available baremetal models on the cloud provider with
+    relevant data.
+    '''
+    if call == 'action':
+        raise SaltCloudSystemExit(
+            'The avail_sizes function must be called with '
+            '-f or --function, or with the --list-sizes option'
+        )
+
+    conn = get_conn()
+
+    baremetal_models = conn.list_baremetal_models()
+
+    return baremetal_models
+
+
 def script(vm_):
     '''
     Return the script deployment object
@@ -488,28 +533,38 @@ def _get_server(vm_):
     cores_per_processor = None
     ram = None
     fixed_instance_size_id = None
+    baremetal_model_id = None
+    server_type = config.get_cloud_config_value(
+        'server_type', vm_, __opts__, default=None,
+        search_global=False
+    )
 
-    if 'fixed_instance_size' in vm_:
-        fixed_instance_size = get_size(vm_)
-        fixed_instance_size_id = fixed_instance_size['id']
-    elif (vm_['vcore'] and vm_['cores_per_processor'] and
-              vm_['ram'] and vm_['hdds']):
-        vcore = config.get_cloud_config_value(
-            'vcore', vm_, __opts__, default=None,
-            search_global=False
-        )
-        cores_per_processor = config.get_cloud_config_value(
-            'cores_per_processor', vm_, __opts__, default=None,
-            search_global=False
-        )
-        ram = config.get_cloud_config_value(
-            'ram', vm_, __opts__, default=None,
-            search_global=False
-        )
+    if server_type == 'baremetal' and vm_['baremetal_model']:
+        baremetal_model = get_baremetal_model(vm_)
+        baremetal_model_id = baremetal_model['id']
     else:
-        raise SaltCloudConfigError("'fixed_instance_size' or 'vcore',"
-                                   "'cores_per_processor', 'ram', and 'hdds'"
-                                   "must be provided.")
+        if 'fixed_instance_size' in vm_:
+            fixed_instance_size = get_size(vm_)
+            fixed_instance_size_id = fixed_instance_size['id']
+        elif (vm_['vcore'] and vm_['cores_per_processor'] and
+                  vm_['ram'] and vm_['hdds']):
+            vcore = config.get_cloud_config_value(
+                'vcore', vm_, __opts__, default=None,
+                search_global=False
+            )
+            cores_per_processor = config.get_cloud_config_value(
+                'cores_per_processor', vm_, __opts__, default=None,
+                search_global=False
+            )
+            ram = config.get_cloud_config_value(
+                'ram', vm_, __opts__, default=None,
+                search_global=False
+            )
+        else:
+            raise SaltCloudConfigError("'fixed_instance_size' or 'vcore',"
+                                       "'cores_per_processor', 'ram', and 'hdds'"
+                                       "must be provided for cloud server, or a"
+                                       "baremetal_model for a baremetal server.")
 
     appliance_id = config.get_cloud_config_value(
         'appliance_id', vm_, __opts__, default=None,
@@ -566,6 +621,7 @@ def _get_server(vm_):
         name=vm_['name'],
         description=description,
         fixed_instance_size_id=fixed_instance_size_id,
+        baremetal_model_id=baremetal_model_id,
         vcore=vcore,
         cores_per_processor=cores_per_processor,
         ram=ram,
@@ -579,7 +635,8 @@ def _get_server(vm_):
         datacenter_id=datacenter_id,
         rsa_key=ssh_key,
         private_network_id=private_network_id,
-        public_key=public_key
+        public_key=public_key,
+        server_type=server_type
     )
 
 
